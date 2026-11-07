@@ -1,0 +1,4 @@
+# Linux 上的 bash 不能运行 CRLF 换行的脚本
+*.sh text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf

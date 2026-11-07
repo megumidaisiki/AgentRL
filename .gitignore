@@ -1,0 +1,27 @@
+# 大文件只放在 RunPod 的 /workspace，不进 Git
+models/
+data/
+checkpoints/
+ckpts/
+wandb/
+*.parquet
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# 密钥
+.env
+.env.*
+*.pem
+*token*
+
+# Python 和系统文件
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+Thumbs.db
+
+# 本地 Claude Code 设置
+.claude/settings.local.json
