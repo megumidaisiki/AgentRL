@@ -35,6 +35,10 @@ export PROJECT_NAME="${PROJECT_NAME:-qwen3_5_2b_lora_grpo}"
 # 每张卡一次前向最多处理的 token 数。Qwen3.5 词表很大，logits 很占显存。
 # 必须不小于单条样本的最大长度（AIME 评测是 1024 + 4096）。
 export PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-6144}"
+# verl 默认各开 8 个奖励进程和 rollout 调度进程，Ray 给每个进程分 1 个 CPU。
+# Pod 的 CPU 核数少于需要的数量时，剩下的进程会一直排队，任务卡住不报错（A40 Pod 只有 7 核）。
+export REWARD_WORKERS="${REWARD_WORKERS:-2}"
+export AGENT_WORKERS="${AGENT_WORKERS:-2}"
 
 require_path() {
     if [ ! -e "$1" ]; then
@@ -69,6 +73,8 @@ run_verl() {
         actor_rollout_ref.actor.entropy_from_logits_with_chunking=True \
         actor_rollout_ref.ref.entropy_from_logits_with_chunking=True \
         actor_rollout_ref.actor.fsdp_config.entropy_checkpointing=True \
+        "reward.num_workers=$REWARD_WORKERS" \
+        "actor_rollout_ref.rollout.agent.num_workers=$AGENT_WORKERS" \
         trainer.log_val_generations=5 \
         "trainer.default_local_dir=$CKPT_DIR/$name" \
         "$@" 2>&1 | tee "$log_file"
