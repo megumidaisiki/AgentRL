@@ -35,7 +35,7 @@
 | RTX 4090：vLLM 报 `No available memory for the cache blocks` | 24 GB 显存下，默认 `ROLLOUT_GPU_MEM_UTIL=0.3` 只给 vLLM 约 7 GB | 调高该值并开启 offload 后，又遇到下一行的内存不足 |
 | RTX 4090：Ray 报内存不足（`OutOfMemoryError`） | Pod 内存上限约 38 GB，offload 把参数放进内存后超限 | 换成 48 GB 显卡 |
 | 失败后重跑，内存或显存莫名不够 | 上次失败运行留下的进程没有退出，占用约 10 GB 内存 | 重跑前运行 `scripts/cleanup.sh` |
-| A40（7 核 CPU）：试跑启动 5 分钟后日志不再更新，GPU 一直空闲，`ray status` 显示 CPU 7/7、GPU 0/1 | verl 默认各开 8 个奖励进程和 rollout 调度进程，每个占 1 个 CPU，CPU 不够时进程一直排队、不报错 | 在 `scripts/common.sh` 中把这两个数量设为 2（`REWARD_WORKERS`、`AGENT_WORKERS`） |
+| A40（7 核 CPU）：试跑启动 5 分钟后日志不再更新，GPU 一直空闲，`ray status` 显示 CPU 7/7、GPU 0/1 | verl 默认开 8 个 TransferQueue 存储进程、8 个奖励进程和 8 个 rollout 调度进程，Ray 给每个分 1 个 CPU，CPU 不够时进程一直排队、不报错。只减少奖励和 rollout 进程还不够，卡在 TransferQueue 初始化 | 在 `scripts/common.sh` 中把三类进程数都设为 2，并设 `ray_kwargs.ray_init.num_cpus=32` |
 | RTX 6000 Ada：计算熵时 `CUDA out of memory` | Qwen3.5 词表很大；`use_remove_padding=False` 时不会分块计算熵，整块 logits 一次性展开 | 改为 `use_remove_padding=True`，开启分块计算熵，每卡 token 上限设为 6144（已写入 `scripts/common.sh`） |
 
 ### 下一步
