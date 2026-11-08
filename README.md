@@ -88,6 +88,7 @@ uv run --frozen --all-packages --extra vllm --extra fsdp python -m verl.model_me
 ## 常见问题
 
 - **脚本报 `$'\r': command not found`：** 文件变成了 CRLF 换行。在 Pod 上运行 `sed -i 's/\r$//' scripts/*.sh`。
+- **运行失败后再跑就内存或显存不足：** 上一次的进程可能没有退出，先运行 `bash scripts/cleanup.sh` 清理。它会结束所有 verl 任务，有训练在跑时不要用。
 - **显存不足：** 依次调小参数，例如 `ROLLOUT_GPU_MEM_UTIL=0.25 TRAIN_BATCH_SIZE=32 ROLLOUT_N=4 bash scripts/train.sh`。
 - **torch 找不到 GPU：** `nvidia-smi` 显示的 CUDA 版本可能低于 13.0，换一台机器重新部署。
 - **Pod 重启后找不到 `uv` 或 `tmux`：** 再运行一次 `setup_pod.sh`，`/workspace` 里的内容不用重新下载。

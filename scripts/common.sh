@@ -32,6 +32,9 @@ export ROLLOUT_GPU_MEM_UTIL="${ROLLOUT_GPU_MEM_UTIL:-0.3}"
 export LORA_RANK="${LORA_RANK:-32}"
 export LORA_ALPHA="${LORA_ALPHA:-32}"
 export PROJECT_NAME="${PROJECT_NAME:-qwen3_5_2b_lora_grpo}"
+# 每张卡一次前向最多处理的 token 数。Qwen3.5 词表很大，logits 很占显存。
+# 必须不小于单条样本的最大长度（AIME 评测是 1024 + 4096）。
+export PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-6144}"
 
 require_path() {
     if [ ! -e "$1" ]; then
@@ -59,10 +62,13 @@ run_verl() {
     bash examples/tuning/lora/run_qwen3_8b_fsdp.sh \
         "data.train_files=$DATA_DIR/gsm8k/train.parquet" \
         "data.val_files=$DATA_DIR/gsm8k/test.parquet" \
-        actor_rollout_ref.model.use_remove_padding=False \
+        actor_rollout_ref.model.use_remove_padding=True \
         'actor_rollout_ref.model.exclude_modules=.*visual.*' \
         actor_rollout_ref.actor.strategy=fsdp2 \
         actor_rollout_ref.ref.strategy=fsdp2 \
+        actor_rollout_ref.actor.entropy_from_logits_with_chunking=True \
+        actor_rollout_ref.ref.entropy_from_logits_with_chunking=True \
+        actor_rollout_ref.actor.fsdp_config.entropy_checkpointing=True \
         trainer.log_val_generations=5 \
         "trainer.default_local_dir=$CKPT_DIR/$name" \
         "$@" 2>&1 | tee "$log_file"
