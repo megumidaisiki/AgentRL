@@ -64,6 +64,9 @@ CHECKPOINT=/workspace/ckpts/<实验名>/global_step_<步数> bash scripts/eval.s
 
 ## 4. 看结果
 
+- **训练中看 GRPO 组内情况：** 训练回答会写到 `/workspace/logs/rollout_generations/<实验名>/`。另开一个窗口运行 `python3 scripts/group_stats.py /workspace/logs/rollout_generations/<实验名> --last 5`，可以看到全错组、全对组的比例，以及回答长度和疑似循环比例。全对组越来越多，说明题目对模型太简单。
+- **传回本地后完整分析：** `python scripts/analyze_generations.py results/<目录>`（思考模式加 `--think`），会打印训练前后的对比表格，并生成训练曲线。
+
 - **分数：** 日志里 `val` 开头的指标。AIME 的奖励是 1 或 -1，准确率看 `acc`。
 - **模型输出：** `log_val_generations` 会打印几条样例，一定要读，分数可能掩盖格式问题。
 - **W&B：** 在 RunPod 的环境变量或 Secrets 里设置 `WANDB_API_KEY`，`train.sh` 会自动启用。不要把密钥写进代码。
@@ -97,4 +100,4 @@ uv run --frozen --all-packages --extra vllm --extra fsdp python -m verl.model_me
 
 - GSM8K 的提示词要求 `####`，AIME 的提示词要求 `\boxed{}`，两者评分规则不同。
 - AIME 2026 只有 30 题，每题约 3.3 分，要和 GSM8K 测试集及输出样例一起看。
-- Qwen3.5-2B 默认不开启思考模式。复现 R1 行为时可以加 `data.apply_chat_template_kwargs.enable_thinking=True`，但官方提示 2B 开启后容易陷入循环。
+- Qwen3.5-2B 默认不开启思考模式。所有脚本都支持 `THINKING=1` 打开思考模式（实际参数是 `+data.apply_chat_template_kwargs.enable_thinking=True`，前面的 `+` 不能省）。打开后 GSM8K 回答上限变为 4096、AIME 变为 8192，验证改用采样（temperature 0.6），AIME 每题采样 8 次。训练和评测必须用同一个模式。官方提示 2B 开启后容易陷入循环，换模式后先跑一次 `THINKING=1 bash scripts/smoke_test.sh`。
