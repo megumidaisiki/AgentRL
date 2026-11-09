@@ -51,6 +51,8 @@ require_path() {
 }
 
 # 用法：run_verl <实验名> [Hydra 覆盖参数...]
+# 每次验证的全部回答写到 $LOG_DIR/val_generations/<实验名>/<步数>.jsonl。
+# 只用控制台日志时，log_val_generations 不会打印样例，所以要靠这个文件看模型输出。
 # 后传入的参数优先，所以调用方可以覆盖这里的默认值。
 run_verl() {
     local name="$1"
@@ -81,6 +83,7 @@ run_verl() {
         "reward.num_workers=$REWARD_WORKERS" \
         "actor_rollout_ref.rollout.agent.num_workers=$AGENT_WORKERS" \
         trainer.log_val_generations=5 \
+        "trainer.validation_data_dir=$LOG_DIR/val_generations/$name" \
         "trainer.default_local_dir=$CKPT_DIR/$name" \
         "$@" 2>&1 | tee "$log_file"
 }

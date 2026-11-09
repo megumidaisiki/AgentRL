@@ -2,7 +2,7 @@
 
 在 RunPod 单张 L40S 上，用 verl 训练 Qwen3.5-2B 的 LoRA 适配器，比较训练前后的评测分数。
 
-> 状态：脚本已通过本地语法和参数检查，**还没有在 GPU 上运行过**。
+> 状态：试跑和基线评测已在 48GB 显卡上跑通，结果见 [results/README.md](results/README.md)。
 
 ## 文件说明
 

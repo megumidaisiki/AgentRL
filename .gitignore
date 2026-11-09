@@ -25,3 +25,6 @@ Thumbs.db
 
 # 本地 Claude Code 设置
 .claude/settings.local.json
+
+# 从 Pod 传回的压缩包，解压后的日志放在 results/ 下
+*.tar.gz

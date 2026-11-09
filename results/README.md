@@ -7,10 +7,26 @@
 | 2026-11-07 | smoke | RTX 6000 Ada 48GB | 64 条训练、32 条验证，4 步 | 25.0%（32 题，无参考价值） | — | 流程跑通，每步约 47 秒 |
 | 2026-11-07 | eval-gsm8k-baseline | RTX 6000 Ada 48GB | 无训练 | **48.4%**（1319 题） | — | 回答上限 1024 token |
 | 2026-11-07 | eval-aime26-baseline | RTX 6000 Ada 48GB | 无训练 | — | **3.3%**（1/30） | 回答上限 4096 token |
+| 2026-11-08 | smoke | L40S 48GB | 同上 | 34.4% → 43.8%（32 题，无参考价值） | — | 修复 CPU 卡住问题后跑通，稳定后每步约 25 秒 |
+| 2026-11-08 | eval-gsm8k-baseline | L40S 48GB | 无训练 | **48.4%**（1319 题） | — | 与 6000 Ada 结果一致 |
+| 2026-11-08 | eval-aime26-baseline | L40S 48GB | 无训练 | — | **13.3%**（4/30） | 同样的设置，6000 Ada 上是 1/30 |
 
 共同设置：verl `b17218b`，Qwen3.5-2B，LoRA rank 32 / alpha 32，关闭思考模式，验证时每题只生成一次回答。
 
-日志在 Pod 的 `/workspace/logs/`：`smoke-20261108_*.log`、`eval-gsm8k-baseline-*.log`、`eval-aime26-baseline-*.log`（时间为 UTC）。
+- 2026-11-07 的日志留在 US-IL-1 的旧存储上，没有传回。
+- 2026-11-08 L40S 的日志在 [`l40s/`](l40s/)，已去掉 Ray 的 DEBUG 输出（时间为 UTC）。
+
+## 2026-11-08 L40S 记录
+
+- **GSM8K 基线完全复现：** 两台不同的显卡都是 48.45%（639/1319），说明评测流程稳定。
+- **AIME 基线波动很大：** 设置完全相同（贪心解码，`do_sample=False`），6000 Ada 答对 1 题，L40S 答对 4 题。
+  - 原因：不同显卡的浮点计算顺序略有差别，在 4096 token 的长回答里会被逐步放大，最后得到不同的答案。GSM8K 回答短，几乎不受影响。
+  - 结论：30 题的 AIME 单次得分至少有 ±3 题的波动。训练前后的对比要在**同一种显卡**上做，最好改成每题采样多次取平均。
+- **试跑耗时（每步 64 个回答）：** 第 1 步 106 秒，其中有预热开销。之后每步：生成约 12 秒，计算旧策略概率约 3 秒，更新参数约 6 秒，合计约 25 秒；保存 checkpoint 约 21 秒，验证 32 题约 10 秒。
+  - 显存峰值约 17.5 GB（训练部分），vLLM 另外占用约 30% 显存。
+  - 回答平均约 450–480 token，8–17% 写满 1024 被截断。
+- **没有回答样例：** 只用控制台日志时，`log_val_generations` 不会打印样例。已在 `scripts/common.sh` 加上 `trainer.validation_data_dir`，之后每次验证的全部回答会写到 `/workspace/logs/val_generations/<实验名>/`。
+- **GSM8K 评测耗时：** 从启动到结束约 11 分钟，其中启动约 3–4 分钟。
 
 ## 2026-11-07 试跑记录
 
@@ -40,6 +56,6 @@
 
 ### 下一步
 
-- 推送本地修改，在 Pod 上 `git pull`。
-- 用 `bash scripts/train.sh; runpodctl stop pod $RUNPOD_POD_ID` 跑 1 个 epoch 正式训练，粗估 4–6 小时。
-- 训练后用 `CHECKPOINT=... bash scripts/eval.sh` 重新评测 GSM8K 和 AIME，并对比回答样例。
+- 在 L40S 上跑 1 个 epoch 正式训练（约 116 步），按试跑耗时估计 3.5–4.5 小时，含 6 次完整验证。
+- 训练后在**同一种显卡**上用 `CHECKPOINT=... bash scripts/eval.sh` 重新评测 GSM8K 和 AIME，对比 `val_generations/` 里的回答。
+- AIME 改成每题采样多次取平均，减小波动。
