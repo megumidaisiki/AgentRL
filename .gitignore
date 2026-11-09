@@ -28,3 +28,5 @@ Thumbs.db
 
 # 从 Pod 传回的压缩包，解压后的日志放在 results/ 下
 *.tar.gz
+# 训练中每次验证的完整回答太大，只保存在本地
+results/*/val_generations/gsm8k-*/
