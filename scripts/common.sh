@@ -44,8 +44,10 @@ export REWARD_WORKERS="${REWARD_WORKERS:-2}"
 export AGENT_WORKERS="${AGENT_WORKERS:-2}"
 
 # 思考模式：THINKING=1 时打开 Qwen3.5 的思考模式，训练和评测必须一致。
-# 思考会让回答长很多，所以回答上限跟着调大。验证改用 Qwen 推荐的采样参数，
-# 因为思考模式下用贪心解码容易陷入重复。
+# 思考会让回答长很多，所以回答上限跟着调大。验证改用 Qwen3.5 模型卡推荐的思考模式文本任务采样参数
+# （temperature 1.0、top_p 0.95、top_k 20），因为思考模式下用贪心解码容易陷入重复。
+# 模型卡还推荐 presence_penalty 1.5，但 verl 的验证参数不支持设置它。
+# 模型卡建议输出长度 32768（难题 81920），这里受预算限制用得短很多，截断会影响分数。
 export THINKING="${THINKING:-0}"
 if [ "$THINKING" = "1" ]; then
     export GSM8K_RESPONSE_LENGTH="${GSM8K_RESPONSE_LENGTH:-4096}"
@@ -54,7 +56,7 @@ if [ "$THINKING" = "1" ]; then
     MODE_ARGS=(
         +data.apply_chat_template_kwargs.enable_thinking=True
         actor_rollout_ref.rollout.val_kwargs.do_sample=True
-        actor_rollout_ref.rollout.val_kwargs.temperature=0.6
+        actor_rollout_ref.rollout.val_kwargs.temperature=1.0
         actor_rollout_ref.rollout.val_kwargs.top_p=0.95
         actor_rollout_ref.rollout.val_kwargs.top_k=20
     )

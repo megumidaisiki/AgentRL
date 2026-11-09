@@ -100,4 +100,4 @@ uv run --frozen --all-packages --extra vllm --extra fsdp python -m verl.model_me
 
 - GSM8K 的提示词要求 `####`，AIME 的提示词要求 `\boxed{}`，两者评分规则不同。
 - AIME 2026 只有 30 题，每题约 3.3 分，要和 GSM8K 测试集及输出样例一起看。
-- Qwen3.5-2B 默认不开启思考模式。所有脚本都支持 `THINKING=1` 打开思考模式（实际参数是 `+data.apply_chat_template_kwargs.enable_thinking=True`，前面的 `+` 不能省）。打开后 GSM8K 回答上限变为 4096、AIME 变为 8192，验证改用采样（temperature 0.6），AIME 每题采样 8 次。训练和评测必须用同一个模式。官方提示 2B 开启后容易陷入循环，换模式后先跑一次 `THINKING=1 bash scripts/smoke_test.sh`。
+- Qwen3.5-2B 默认不开启思考模式。所有脚本都支持 `THINKING=1` 打开思考模式（实际参数是 `+data.apply_chat_template_kwargs.enable_thinking=True`，前面的 `+` 不能省）。打开后 GSM8K 回答上限变为 4096、AIME 变为 8192，验证改用模型卡推荐的采样参数（temperature 1.0、top_p 0.95、top_k 20），AIME 每题采样 8 次。训练和评测必须用同一个模式。官方提示 2B 开启后容易陷入循环，换模式后先跑一次 `THINKING=1 bash scripts/smoke_test.sh`。
