@@ -1,7 +1,7 @@
-"""把 math-ai/aime26 转成 verl 使用的 parquet 格式。
+"""Convert math-ai/aime26 into the parquet format verl expects.
 
-data_source 以 "aime" 开头时，verl 会用 math_dapo 评分。
-它读取 "Answer: ..." 或 \\boxed{...}，这里要求模型使用 \\boxed{}。
+When data_source starts with "aime", verl scores answers with math_dapo, which reads
+"Answer: ..." or \\boxed{...}. The prompt here asks the model to use \\boxed{}.
 """
 
 import argparse
@@ -37,7 +37,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     output_path = os.path.join(args.output_dir, "test.parquet")
     dataset.to_parquet(output_path)
-    print(f"已写入 {len(dataset)} 道题：{output_path}")
+    print(f"Wrote {len(dataset)} problems to {output_path}")
 
 
 if __name__ == "__main__":

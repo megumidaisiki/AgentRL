@@ -1,4 +1,4 @@
-# Linux 上的 bash 不能运行 CRLF 换行的脚本
+# bash on Linux cannot run scripts with CRLF line endings
 *.sh text eol=lf
 *.py text eol=lf
 *.yaml text eol=lf

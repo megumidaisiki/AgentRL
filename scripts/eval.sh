@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# 只评测不训练。不传 CHECKPOINT 时，测的是训练前的基线。
+# Evaluate only, no training. Without CHECKPOINT this measures the pre-training baseline.
 #
-# 用法：
+# Usage:
 #   bash scripts/eval.sh gsm8k
 #   bash scripts/eval.sh aime26
-#   CHECKPOINT=/workspace/ckpts/<实验名>/global_step_<步数> bash scripts/eval.sh aime26
-#   THINKING=1 bash scripts/eval.sh gsm8k    # 打开思考模式，训练时开了，评测也要开
+#   CHECKPOINT=/workspace/ckpts/<experiment>/global_step_<step> bash scripts/eval.sh aime26
+#   THINKING=1 bash scripts/eval.sh gsm8k    # thinking mode; must match the mode used in training
 #
-# AIME 只有 30 题，单次回答的分数波动很大。思考模式下默认每题采样 AIME_N=8 次取平均。
+# AIME has only 30 problems, so a single response per problem is very noisy. In thinking mode each
+# problem is sampled AIME_N=8 times by default and the scores are averaged.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 task="${1:-}"
@@ -31,14 +32,14 @@ case "$task" in
         fi
         ;;
     *)
-        echo "用法：bash scripts/eval.sh <gsm8k|aime26> [Hydra 覆盖参数...]" >&2
+        echo "Usage: bash scripts/eval.sh <gsm8k|aime26> [Hydra overrides...]" >&2
         exit 1
         ;;
 esac
-require_path "$val_file" "请先运行 scripts/prepare_data.sh。"
+require_path "$val_file" "Run scripts/prepare_data.sh first."
 
 if [ -n "${CHECKPOINT:-}" ]; then
-    require_path "$CHECKPOINT" "请检查 CHECKPOINT 路径。"
+    require_path "$CHECKPOINT" "Check the CHECKPOINT path."
     resume=(trainer.resume_mode=resume_path "trainer.resume_from_path=$CHECKPOINT")
     label=trained
 else

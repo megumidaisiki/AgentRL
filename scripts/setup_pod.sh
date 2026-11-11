@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 Pod 上安装环境。每次新建或重新启动 Pod 后运行一次，重复运行是安全的。
+# Install the environment on the Pod. Run once after creating or restarting a Pod; safe to re-run.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 apt-get update
@@ -22,15 +22,15 @@ git checkout "$VERL_COMMIT"
 
 nvidia-smi
 
-# 首次运行会根据 uv.lock 创建 .venv，需要一些时间。
+# The first run creates .venv from uv.lock, which takes a while.
 "${UV_RUN[@]}" python - <<'PY'
 import torch
 
 print("torch:", torch.__version__)
-print("CUDA 可用:", torch.cuda.is_available())
+print("CUDA available:", torch.cuda.is_available())
 if not torch.cuda.is_available():
-    raise SystemExit("torch 找不到 GPU。请检查 nvidia-smi 显示的 CUDA 版本是否不低于 13.0。")
+    raise SystemExit("torch cannot see a GPU. Check that nvidia-smi reports CUDA 13.0 or newer.")
 print("GPU:", torch.cuda.get_device_name(0))
 PY
 
-echo "环境已就绪。"
+echo "Environment ready."

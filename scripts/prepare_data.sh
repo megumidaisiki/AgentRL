@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 下载模型并准备 GSM8K 和 AIME 2026 数据。文件都保存在 /workspace。
+# Download the model and prepare the GSM8K and AIME 2026 data. Everything is stored under /workspace.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-require_path "$VERL_DIR" "请先运行 scripts/setup_pod.sh。"
+require_path "$VERL_DIR" "Run scripts/setup_pod.sh first."
 cd "$VERL_DIR"
 
 "${UV_RUN[@]}" hf download Qwen/Qwen3.5-2B --local-dir "$MODEL_PATH"
@@ -11,4 +11,4 @@ cd "$VERL_DIR"
 
 "${UV_RUN[@]}" python "$PROJECT_DIR/scripts/prepare_aime26.py" --output_dir "$DATA_DIR/aime26"
 
-echo "模型和数据已就绪。"
+echo "Model and data ready."

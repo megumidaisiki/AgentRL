@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 所有脚本共用的路径和默认参数。不要直接运行，由其他脚本 source。
+# Shared paths and default parameters. Do not run directly; other scripts source this file.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,7 +11,8 @@ export DATA_DIR="${DATA_DIR:-$WORKSPACE/data}"
 export CKPT_DIR="${CKPT_DIR:-$WORKSPACE/ckpts}"
 export LOG_DIR="${LOG_DIR:-$WORKSPACE/logs}"
 
-# 缓存和 Python 都放持久存储。容器盘在 Pod 停止后会清空，会让 .venv 失效。
+# Keep caches and the Python install on persistent storage. The container disk is wiped
+# when a Pod stops, which would break .venv.
 export HF_HOME="${HF_HOME:-$WORKSPACE/hf}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$WORKSPACE/.uv-cache}"
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$WORKSPACE/.uv-python}"
@@ -24,7 +25,7 @@ fi
 
 UV_RUN=(uv run --frozen --all-packages --extra vllm --extra fsdp)
 
-# 以下变量由 verl 的 run_qwen3_8b_fsdp.sh 读取，运行时可以用环境变量覆盖。
+# The variables below are read by verl's run_qwen3_8b_fsdp.sh and can be overridden via environment variables.
 export MODEL_PATH="${MODEL_PATH:-$WORKSPACE/models/Qwen3.5-2B}"
 export NGPUS_PER_NODE="${NGPUS_PER_NODE:-1}"
 export ROLLOUT_TP="${ROLLOUT_TP:-1}"
@@ -32,22 +33,26 @@ export ROLLOUT_GPU_MEM_UTIL="${ROLLOUT_GPU_MEM_UTIL:-0.3}"
 export LORA_RANK="${LORA_RANK:-32}"
 export LORA_ALPHA="${LORA_ALPHA:-32}"
 export PROJECT_NAME="${PROJECT_NAME:-qwen3_5_2b_lora_grpo}"
-# 每张卡一次前向最多处理的 token 数。Qwen3.5 词表很大，logits 很占显存。
-# 必须不小于单条样本的最大长度。run_verl 会在需要时自动调大（例如思考模式下的 AIME 评测）。
+# Max tokens per GPU in one forward pass. Qwen3.5 has a very large vocabulary, so logits use a lot of memory.
+# Must be at least the longest single sample; run_verl raises it automatically when needed
+# (e.g. AIME evaluation in thinking mode).
 export PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-6144}"
-# verl 会开很多辅助进程（TransferQueue 存储、奖励、rollout 调度各 8 个），Ray 默认每个分 1 个 CPU。
-# Pod 的 CPU 核数不够时，剩下的进程会一直排队，任务卡住不报错（A40 Pod 只有 7 核）。
-# 所以减少进程数，并让 Ray 按 32 个 CPU 分配（这些进程大多空闲，不会真的占满 CPU）。
+# verl starts many helper actors (8 each for TransferQueue storage, reward, and rollout agents), and Ray
+# reserves 1 CPU for each by default. On Pods with few cores the remaining actors queue forever and the job
+# hangs without an error (an A40 Pod had only 7 cores). So we start fewer actors and tell Ray there are
+# 32 CPUs (these actors are mostly idle and do not actually saturate the CPU).
 export RAY_NUM_CPUS="${RAY_NUM_CPUS:-32}"
 export TQ_STORAGE_UNITS="${TQ_STORAGE_UNITS:-2}"
 export REWARD_WORKERS="${REWARD_WORKERS:-2}"
 export AGENT_WORKERS="${AGENT_WORKERS:-2}"
 
-# 思考模式：THINKING=1 时打开 Qwen3.5 的思考模式，训练和评测必须一致。
-# 思考会让回答长很多，所以回答上限跟着调大。验证改用 Qwen3.5 模型卡推荐的思考模式文本任务采样参数
-# （temperature 1.0、top_p 0.95、top_k 20），因为思考模式下用贪心解码容易陷入重复。
-# 模型卡还推荐 presence_penalty 1.5，但 verl 的验证参数不支持设置它。
-# 模型卡建议输出长度 32768（难题 81920），这里受预算限制用得短很多，截断会影响分数。
+# Thinking mode: THINKING=1 enables Qwen3.5's thinking mode. Training and evaluation must use the same mode.
+# Thinking makes responses much longer, so the response limits are raised. Validation uses the sampling
+# parameters the Qwen3.5 model card recommends for text tasks in thinking mode (temperature 1.0, top_p 0.95,
+# top_k 20), because greedy decoding tends to loop in thinking mode.
+# The model card also recommends presence_penalty 1.5, but verl's validation config does not expose it.
+# The model card recommends 32768 output tokens (81920 for hard problems); budget limits force much shorter
+# limits here, and truncation lowers the scores.
 export THINKING="${THINKING:-0}"
 if [ "$THINKING" = "1" ]; then
     export GSM8K_RESPONSE_LENGTH="${GSM8K_RESPONSE_LENGTH:-4096}"
@@ -69,33 +74,33 @@ fi
 
 require_path() {
     if [ ! -e "$1" ]; then
-        echo "找不到 $1。$2" >&2
+        echo "Not found: $1. $2" >&2
         exit 1
     fi
 }
 
-# 用法：run_verl <实验名> [Hydra 覆盖参数...]
-# 每次验证的全部回答写到 $LOG_DIR/val_generations/<实验名>/<步数>.jsonl。
-# 只用控制台日志时，log_val_generations 不会打印样例，所以要靠这个文件看模型输出。
-# 后传入的参数优先，所以调用方可以覆盖这里的默认值。
+# Usage: run_verl <experiment name> [Hydra overrides...]
+# Every validation response is written to $LOG_DIR/val_generations/<experiment>/<step>.jsonl.
+# With only the console logger, log_val_generations prints no samples, so this file is how we read outputs.
+# Later arguments take precedence, so callers can override the defaults here.
 run_verl() {
     local name="$1"
     shift
 
-    require_path "$VERL_DIR" "请先运行 scripts/setup_pod.sh。"
-    require_path "$MODEL_PATH" "请先运行 scripts/prepare_data.sh。"
-    require_path "$DATA_DIR/gsm8k/train.parquet" "请先运行 scripts/prepare_data.sh。"
+    require_path "$VERL_DIR" "Run scripts/setup_pod.sh first."
+    require_path "$MODEL_PATH" "Run scripts/prepare_data.sh first."
+    require_path "$DATA_DIR/gsm8k/train.parquet" "Run scripts/prepare_data.sh first."
 
     export EXPERIMENT_NAME="$name"
-    # 每卡 token 上限不能小于一条样本的最大长度，否则 verl 会报错。
+    # The per-GPU token limit must be at least the longest sample, otherwise verl errors out.
     local need=$(( ${MAX_PROMPT_LENGTH:-512} + ${MAX_RESPONSE_LENGTH:-1024} ))
     if [ "$PPO_MAX_TOKEN_LEN_PER_GPU" -lt "$need" ]; then
         export PPO_MAX_TOKEN_LEN_PER_GPU="$need"
     fi
-    echo "思考模式：$THINKING，回答上限：${MAX_RESPONSE_LENGTH:-1024}，每卡 token 上限：$PPO_MAX_TOKEN_LEN_PER_GPU"
+    echo "Thinking mode: $THINKING, max response length: ${MAX_RESPONSE_LENGTH:-1024}, max tokens per GPU: $PPO_MAX_TOKEN_LEN_PER_GPU"
     mkdir -p "$LOG_DIR" "$CKPT_DIR"
     local log_file="$LOG_DIR/$name-$(date +%Y%m%d_%H%M%S).log"
-    echo "日志文件：$log_file"
+    echo "Log file: $log_file"
 
     cd "$VERL_DIR"
     bash examples/tuning/lora/run_qwen3_8b_fsdp.sh \

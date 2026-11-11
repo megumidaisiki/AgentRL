@@ -1,49 +1,91 @@
-# Qwen3.5-2B LoRA + GRPO 入门项目
+# GRPO on a Budget: LoRA RL Post-Training of Qwen3.5-2B with verl
 
-在 RunPod 单张 L40S 上，用 verl 训练 Qwen3.5-2B 的 LoRA 适配器，比较训练前后的评测分数。
+A small, self-contained study of RL post-training for a language model on **one rented GPU**. The project trains a LoRA adapter on [Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B) with GRPO (the RL algorithm used in DeepSeek-R1) using [verl](https://github.com/verl-project/verl), then compares model behavior and evaluation scores before and after training on GSM8K and AIME 2026.
 
-> 状态：试跑和基线评测已在 48GB 显卡上跑通，结果见 [results/README.md](results/README.md)。
+The goal was not a leaderboard number. The goal was to run the full pipeline end to end, and to check whether the "aha" behavior described in the DeepSeek-R1 paper (longer responses, self-reflection) shows up at this scale, and why or why not.
 
-## 文件说明
+Full results, tables, and logs: **[results/README.md](results/README.md)**.
 
-| 文件 | 作用 |
+## Key findings
+
+1. **The reward gain was format, not reasoning.** One epoch of GRPO raised strict GSM8K accuracy from **49.1% to 72.0%**. But verl's grader requires `#### <number>` with a space, and the base model often wrote `####17` or `#### $18`. Judged on the answer alone, accuracy actually went from **75.8% to 73.1%**. The model learned to satisfy the grader within ~25 steps and spent the rest of training compressing its answers.
+2. **No R1-style "aha" moment at this scale.** Instead of growing, responses got shorter (486 → 288 tokens), policy entropy fell (0.43 → 0.14), and KL to the base model rose from 0.007 to 1.5. On AIME, responses that loop until the length limit rose from 7% to 30%.
+3. **In thinking mode, the bottleneck is the token budget.** With Qwen3.5's thinking mode on and an 8192-token limit, the model solved **95%** of the GSM8K problems it finished reasoning about, but **29%** of responses were still thinking when cut off. On AIME, none of 240 responses finished within 8192 tokens. GSM8K is too easy to teach this model new problem-solving; the remaining headroom is format and reasoning length.
+
+![Training curves for run 1](results/run1/training_curves.png)
+
+*Run 1 (thinking off): reward saturates early while entropy keeps falling and KL keeps rising. The bottom-middle panel shows strict vs. lenient accuracy: the gap closes, but lenient accuracy does not go up.*
+
+## Setup
+
+| | |
 |---|---|
-| `scripts/common.sh` | 路径、固定的 verl 版本、默认参数 |
-| `scripts/setup_pod.sh` | 在 Pod 上安装环境 |
-| `scripts/prepare_data.sh` | 下载模型，准备 GSM8K 和 AIME 2026 |
-| `scripts/prepare_aime26.py` | 把 AIME 2026 转成 verl 格式 |
-| `scripts/smoke_test.sh` | 小规模试跑 |
-| `scripts/eval.sh` | 只评测不训练 |
-| `scripts/train.sh` | 正式训练 |
-| `results/` | 实验记录和传回的小文件 |
+| Model | Qwen3.5-2B, LoRA rank 32 / alpha 32 (the base model stays frozen) |
+| Algorithm | GRPO: 64 prompts × 5 responses per step, lr 3e-6, KL loss coefficient 0.001 |
+| Framework | verl, pinned to commit `b17218b`; vLLM for generation, FSDP2 for training, Ray for orchestration |
+| Data | GSM8K train/test (1319 test problems); AIME 2026 (30 problems) for evaluation |
+| Hardware | 1 × NVIDIA L40S 48 GB on RunPod, ~$1.09/h |
+| Cost | Run 1 (training + evaluation) took ~5.3 h, about $6 |
 
-## 1. 准备 RunPod
+## Repository layout
 
-1. 把本机公钥加到 RunPod 的 **Settings → SSH Public Keys**。
-2. 新建 100 GB 的 Network Volume，选有 L40S 库存的数据中心。
-3. 部署 Pod：1 张 L40S，On-Demand，Runpod PyTorch 模板，容器盘 40 GB，挂载上面的 Volume。如果有 CUDA 筛选项，选 13.0 或以上。
-4. 复制 Connect 页的 **SSH over exposed TCP** 命令，在本地终端连接。
+| Path | Purpose |
+|---|---|
+| `scripts/common.sh` | All paths, the pinned verl version, and default hyperparameters (the single source of truth) |
+| `scripts/setup_pod.sh` | Installs the environment on a fresh Pod |
+| `scripts/prepare_data.sh` | Downloads the model and prepares GSM8K and AIME 2026 |
+| `scripts/prepare_aime26.py` | Converts AIME 2026 into verl's parquet format |
+| `scripts/smoke_test.sh` | Small trial run (4 steps) to check that everything works |
+| `scripts/eval.sh` | Evaluation only, for the baseline or a trained checkpoint |
+| `scripts/train.sh` | Full GRPO training |
+| `scripts/cleanup.sh` | Kills processes left over from a failed run |
+| `scripts/group_stats.py` | Per-step GRPO diagnostics from training rollouts |
+| `scripts/analyze_generations.py` | Before/after analysis, failure categories, and training curves |
+| `results/` | Experiment log, cleaned logs, and evaluation outputs |
 
-## 2. 把代码放到 Pod 上
+The shell scripts are thin wrappers: they set hyperparameters and call verl's own training entry point (`verl.trainer.main_ppo`) with Hydra overrides. verl provides the GRPO implementation and the rule-based graders for GSM8K and AIME.
 
-推荐先推到私有 GitHub 仓库，再在 Pod 上克隆：
+## Diagnostics
+
+The two analysis scripts are where most of the findings came from.
+
+- **`group_stats.py`**: GRPO normalizes rewards within each group of responses to the same prompt. If a group is all correct or all wrong, every response gets zero advantage and the prompt contributes nothing to the update. For each training step the script reports the share of all-wrong / all-correct / mixed groups, pass@n, response length for correct vs. wrong answers, likely repetition loops (detected by compression ratio), and, in thinking mode, how often thinking was cut off. It can run on the Pod during training:
+  ```bash
+  python3 scripts/group_stats.py /workspace/logs/rollout_generations/<experiment> --last 5
+  ```
+- **`analyze_generations.py`**: classifies every GSM8K response (correct, right answer with a rejected format, truncated, etc.), reports **strict** accuracy (verl's grader) next to **lenient** accuracy (answer only), counts per-problem flips, reports AIME mean@k / pass@k, and draws the 12-panel training-curve figure above:
+  ```bash
+  python scripts/analyze_generations.py results/run1            # thinking off
+  python scripts/analyze_generations.py results/<dir> --think   # thinking on
+  ```
+
+## Reproducing
+
+### 1. Prepare a RunPod GPU
+
+1. Add an SSH public key under **Settings → SSH Public Keys** on RunPod. A dedicated key for RunPod is recommended.
+2. Optionally create a Network Volume (~100 GB) in a datacenter with L40S availability, so data survives Pod termination.
+3. Deploy a Pod: 1 × L40S (any 48 GB GPU should work), On-Demand, RunPod PyTorch template, 40 GB container disk. If there is a CUDA filter, pick 13.0 or newer.
+4. Connect with the **SSH over exposed TCP** command from the Connect tab.
+
+### 2. Get the code onto the Pod
 
 ```bash
 cd /workspace
-git clone https://github.com/<你的用户名>/<仓库名>.git project
-cd project
+git clone https://github.com/megumidaisiki/AgentRL.git
+cd AgentRL
 ```
 
-## 3. 运行
+### 3. Run
 
-先开一个 tmux 会话，SSH 断开后任务不会中断。第一次运行时 tmux 还没安装，所以先装好环境：
+Install the environment first (this also installs tmux), then work inside tmux so jobs survive SSH disconnects:
 
 ```bash
 bash scripts/setup_pod.sh
 tmux new -s train
 ```
 
-断开后用 `tmux attach -t train` 回来。在 tmux 里依次运行：
+Reattach later with `tmux attach -t train`. Inside tmux, run in order:
 
 ```bash
 bash scripts/prepare_data.sh
@@ -53,51 +95,50 @@ bash scripts/eval.sh aime26
 bash scripts/train.sh
 ```
 
-训练完成后，加载 checkpoint 再评测一次：
+After training, evaluate the checkpoint:
 
 ```bash
-CHECKPOINT=/workspace/ckpts/<实验名>/global_step_<步数> bash scripts/eval.sh gsm8k
-CHECKPOINT=/workspace/ckpts/<实验名>/global_step_<步数> bash scripts/eval.sh aime26
+CHECKPOINT=/workspace/ckpts/<experiment>/global_step_<step> bash scripts/eval.sh gsm8k
+CHECKPOINT=/workspace/ckpts/<experiment>/global_step_<step> bash scripts/eval.sh aime26
 ```
 
-用同一个 `RUN_NAME` 再运行 `train.sh`，verl 会自动从最新的 checkpoint 继续。想重新开始就换一个名字。
+Running `train.sh` again with the same `RUN_NAME` resumes from the latest checkpoint; use a new name to start fresh. Any setting can be overridden with environment variables (see `scripts/common.sh`) or extra Hydra arguments, e.g. `TOTAL_EPOCHS=2 bash scripts/train.sh data.train_max_samples=1500`.
 
-## 4. 看结果
+**Thinking mode.** Every script accepts `THINKING=1`, which passes `+data.apply_chat_template_kwargs.enable_thinking=True` to verl (the leading `+` is required because the key is not in verl's base config). It also raises the response limits (4096 for GSM8K, 8192 for AIME), switches validation to the model card's recommended sampling (temperature 1.0, top_p 0.95, top_k 20), and samples each AIME problem 8 times. Training and evaluation must use the same mode. Run `THINKING=1 bash scripts/smoke_test.sh` first after switching.
 
-- **训练中看 GRPO 组内情况：** 训练回答会写到 `/workspace/logs/rollout_generations/<实验名>/`。另开一个窗口运行 `python3 scripts/group_stats.py /workspace/logs/rollout_generations/<实验名> --last 5`，可以看到全错组、全对组的比例，以及回答长度和疑似循环比例。全对组越来越多，说明题目对模型太简单。
-- **传回本地后完整分析：** `python scripts/analyze_generations.py results/<目录>`（思考模式加 `--think`），会打印训练前后的对比表格，并生成训练曲线。
+### 4. Copy results back and shut down
 
-- **分数：** 日志里 `val` 开头的指标。AIME 的奖励是 1 或 -1，准确率看 `acc`。
-- **模型输出：** `log_val_generations` 会打印几条样例，一定要读，分数可能掩盖格式问题。
-- **W&B：** 在 RunPod 的环境变量或 Secrets 里设置 `WANDB_API_KEY`，`train.sh` 会自动启用。不要把密钥写进代码。
-
-## 5. 传回结果并关机
-
-在本地终端运行，端口和 IP 在 Connect 页：
+From your local machine (port and IP are on the Connect tab):
 
 ```bash
-scp -P <端口> -r root@<IP>:/workspace/logs F:/a_Agentic_RL/results/
+scp -P <port> -r root@<ip>:/workspace/logs ./results/
 ```
 
-如果要保留适配器，先在 Pod 上把 checkpoint 导出成标准格式，再用 `scp` 传回 `lora_adapter` 目录。这条命令还没有验证过，verl 的合并工具是否支持这里用的 `fsdp2` checkpoint，要实际跑一次才知道：
+Then terminate the Pod. A Network Volume, if used, keeps its data and keeps billing for storage until deleted.
+
+Exporting the LoRA adapter to a standard format has **not been verified**; it is unclear whether verl's merger supports the `fsdp2` checkpoints used here:
 
 ```bash
 cd /workspace/verl
-uv run --frozen --all-packages --extra vllm --extra fsdp python -m verl.model_merger merge --backend fsdp --local_dir /workspace/ckpts/<实验名>/global_step_<步数>/actor --target_dir /workspace/export/<实验名>
+uv run --frozen --all-packages --extra vllm --extra fsdp python -m verl.model_merger merge --backend fsdp --local_dir /workspace/ckpts/<experiment>/global_step_<step>/actor --target_dir /workspace/export/<experiment>
 ```
 
-确认文件已传回后，**Terminate Pod**。Volume 上的数据会保留，也会继续收存储费。项目结束后记得删除它。
+## Troubleshooting
 
-## 常见问题
+- **`$'\r': command not found`**: the scripts were checked out with CRLF line endings. Run `sed -i 's/\r$//' scripts/*.sh` on the Pod.
+- **Out of RAM or GPU memory when re-running after a failure**: processes from the previous run may still be alive. Run `bash scripts/cleanup.sh` first. It kills all verl jobs, so do not run it while training.
+- **The job hangs silently with an idle GPU**: on Pods with few CPU cores, Ray actors wait forever for CPUs. `scripts/common.sh` already reduces the actor counts and sets `num_cpus=32`; see the troubleshooting table in `results/README.md`.
+- **GPU out of memory**: lower settings step by step, e.g. `ROLLOUT_GPU_MEM_UTIL=0.25 TRAIN_BATCH_SIZE=32 ROLLOUT_N=4 bash scripts/train.sh`. 24 GB GPUs did not work for this setup.
+- **torch cannot see the GPU**: `nvidia-smi` may report a CUDA version older than 13.0. Redeploy on a different machine.
+- **`uv` or `tmux` missing after a Pod restart**: run `setup_pod.sh` again; data in `/workspace` does not need to be downloaded again.
 
-- **脚本报 `$'\r': command not found`：** 文件变成了 CRLF 换行。在 Pod 上运行 `sed -i 's/\r$//' scripts/*.sh`。
-- **运行失败后再跑就内存或显存不足：** 上一次的进程可能没有退出，先运行 `bash scripts/cleanup.sh` 清理。它会结束所有 verl 任务，有训练在跑时不要用。
-- **显存不足：** 依次调小参数，例如 `ROLLOUT_GPU_MEM_UTIL=0.25 TRAIN_BATCH_SIZE=32 ROLLOUT_N=4 bash scripts/train.sh`。
-- **torch 找不到 GPU：** `nvidia-smi` 显示的 CUDA 版本可能低于 13.0，换一台机器重新部署。
-- **Pod 重启后找不到 `uv` 或 `tmux`：** 再运行一次 `setup_pod.sh`，`/workspace` 里的内容不用重新下载。
+## Caveats
 
-## 解读结果时注意
+- GSM8K prompts ask for `####` and AIME prompts ask for `\boxed{}`; the two use different graders.
+- AIME 2026 has only 30 problems (~3.3 points each). A single greedy run is very noisy: two identical baselines scored 4/30 and 1/30. Read it together with GSM8K and the actual responses.
+- All results come from single runs on one GPU type with no repeated seeds.
+- Training used much shorter response limits than the model card recommends (32768 tokens), because of budget.
 
-- GSM8K 的提示词要求 `####`，AIME 的提示词要求 `\boxed{}`，两者评分规则不同。
-- AIME 2026 只有 30 题，每题约 3.3 分，要和 GSM8K 测试集及输出样例一起看。
-- Qwen3.5-2B 默认不开启思考模式。所有脚本都支持 `THINKING=1` 打开思考模式（实际参数是 `+data.apply_chat_template_kwargs.enable_thinking=True`，前面的 `+` 不能省）。打开后 GSM8K 回答上限变为 4096、AIME 变为 8192，验证改用模型卡推荐的采样参数（temperature 1.0、top_p 0.95、top_k 20），AIME 每题采样 8 次。训练和评测必须用同一个模式。官方提示 2B 开启后容易陷入循环，换模式后先跑一次 `THINKING=1 bash scripts/smoke_test.sh`。
+## Acknowledgements
+
+Built on [verl](https://github.com/verl-project/verl) and [Qwen3.5](https://huggingface.co/Qwen/Qwen3.5-2B). The method follows GRPO as described in DeepSeekMath and DeepSeek-R1.

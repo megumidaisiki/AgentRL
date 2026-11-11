@@ -1,4 +1,4 @@
-# 大文件只放在 RunPod 的 /workspace，不进 Git
+# Large files live only in /workspace on RunPod, never in Git
 models/
 data/
 checkpoints/
@@ -10,23 +10,25 @@ wandb/
 *.pt
 *.pth
 
-# 密钥
+# Secrets
 .env
 .env.*
 *.pem
 *token*
 
-# Python 和系统文件
+# Python and OS files
 __pycache__/
 *.pyc
 .venv/
 .DS_Store
 Thumbs.db
 
-# 本地 Claude Code 设置
+# Local Claude Code settings
 .claude/settings.local.json
 
-# 从 Pod 传回的压缩包，解压后的日志放在 results/ 下
+# Archives copied back from the Pod; extracted logs go under results/
 *.tar.gz
-# 训练中每次验证的完整回答太大，只保存在本地
+# Full validation responses saved during training are too large; kept locally only
 results/*/val_generations/gsm8k-*/
+# Thinking-mode GSM8K evaluation responses (~23 MB); kept locally only
+results/*/val_generations/eval-gsm8k-*-think/

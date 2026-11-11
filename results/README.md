@@ -1,53 +1,56 @@
-# 实验记录
+# Experiment Log
 
-这里只放小文件：日志、分数和样例输出。每次实验记一行。所有结果都在 L40S 48GB 上得到。
+This directory holds only small files: logs, scores, and sample outputs. One row per experiment. All results were produced on a single NVIDIA L40S (48 GB).
 
-| 日期 | 实验名 | 配置 | GSM8K | AIME 2026 | 备注 |
+| Date | Run | Setup | GSM8K | AIME 2026 | Notes |
 |---|---|---|---|---|---|
-| 2026-11-08 | smoke | 64 条训练、32 条验证，4 步 | 34.4% → 43.8%（32 题，无参考价值） | — | 流程跑通，稳定后每步约 25 秒 |
-| 2026-11-08 | eval-*-baseline（第一次） | 无训练 | 48.4% | 13.3%（4/30） | 没有保存回答 |
-| 2026-11-09 | eval-*-baseline（第二次，保存回答） | 无训练 | **49.1%** | **3.3%**（1/30） | 作为训练前的对照 |
-| 2026-11-09 | gsm8k-r32-e1 | 1 个 epoch，116 步，约 2.5 小时 | 49.1% → 72.0% | — | 训练中的验证 |
-| 2026-11-09 | eval-*-trained（第 116 步） | 加载训练后的 LoRA | **72.0%**（严格）／ 73.1%（宽松） | **3.3%**（1/30） | 涨分几乎全部来自格式，详见下文 |
+| 2026-11-08 | smoke | 64 train / 32 val prompts, 4 steps | 34.4% → 43.8% (32 problems, not meaningful) | — | Pipeline works; ~25 s per step once warmed up |
+| 2026-11-08 | eval-*-baseline (1st) | No training | 48.4% | 13.3% (4/30) | Responses not saved |
+| 2026-11-09 | eval-*-baseline (2nd, responses saved) | No training | **49.1%** | **3.3%** (1/30) | Pre-training reference |
+| 2026-11-09 | gsm8k-r32-e1 | 1 epoch, 116 steps, ~2.5 h | 49.1% → 72.0% | — | In-training validation |
+| 2026-11-09 | eval-*-trained (step 116) | Trained LoRA adapter | **72.0%** (strict) / 73.1% (lenient) | **3.3%** (1/30) | Gain is almost entirely format; see below |
+| 2026-11-09 | smoke-think | Thinking mode, 4096-token limit | — | — | 64% of responses hit the 4096 limit |
+| 2026-11-10 | eval-*-baseline-think | Thinking mode, no training, 8192-token limit | **44.7%** (strict) / 71.7% (lenient) | **0%** (8 samples each, 0/240) | See "Thinking-mode baseline" |
 
-共同设置：verl `b17218b`，Qwen3.5-2B，LoRA rank 32 / alpha 32，关闭思考模式，验证时贪心解码、每题只生成一次回答。GSM8K 回答上限 1024 token，AIME 4096 token。
+Shared setup for the non-thinking runs: verl `b17218b`, Qwen3.5-2B, LoRA rank 32 / alpha 32, thinking mode off, greedy decoding at validation with one response per problem. Response limits: 1024 tokens for GSM8K, 4096 for AIME.
 
-- 2026-11-08 的试跑和第一次基线日志在 [`l40s/`](l40s/)。
-- 2026-11-09 的训练、训练前后评测的日志和评测回答在 [`run1/`](run1/)。训练中每 25 步的验证回答（约 11 MB）只保存在本地，没有提交。
-- 日志已去掉 Ray 的 DEBUG 输出，时间为 UTC。
-- 分析脚本：`python scripts/analyze_generations.py results/run1`，会打印下面的表格并重新生成训练曲线。
+- Logs from the 2026-11-08 smoke test and first baseline: [`l40s/`](l40s/).
+- Training and before/after evaluation logs and responses from 2026-11-09: [`run1/`](run1/). Validation responses saved every 25 steps during training (~11 MB) are kept locally and not committed.
+- Thinking-mode logs: [`think/`](think/).
+- Ray DEBUG lines were stripped from the logs; timestamps are UTC. Lines printed by the scripts themselves may be in Chinese because the logs predate the English translation of the scripts.
+- To reproduce the tables and curves: `python scripts/analyze_generations.py results/run1`.
 
-## 第一次正式训练（gsm8k-r32-e1）
+## Run 1: GRPO on GSM8K (gsm8k-r32-e1)
 
-设置：GRPO，每步 64 题 × 5 个回答，1 个 epoch（116 步），学习率 3e-6，KL 损失系数 0.001（`low_var_kl`）。训练约 2.5 小时，加上训练后评测共约 5.3 小时，L40S 每小时 $1.09。
+Setup: GRPO, 64 prompts × 5 responses per step, 1 epoch (116 steps), learning rate 3e-6, KL loss coefficient 0.001 (`low_var_kl`). Training took ~2.5 h; with evaluation, ~5.3 h total at $1.09/h.
 
-![训练曲线](run1/training_curves.png)
+![Training curves](run1/training_curves.png)
 
-### 主要结论：分数上涨几乎全部来自格式
+### Main finding: the score gain came almost entirely from answer format
 
-verl 的 GSM8K 评分规则只认 `#### 数字`，**井号后必须有空格**。基线模型很多回答写成 `####17` 或 `#### $18,000`，答案对了也记 0 分。
+verl's GSM8K grader only accepts `#### <number>`, **with a space after the hashes**. The base model often wrote `####17` or `#### $18,000`, which score 0 even when the number is right.
 
-| 类别（1319 题） | 训练前 | 训练后 |
+| Category (1319 problems) | Before | After |
 |---|---|---|
-| 答对（严格评分） | 647 | 950 |
-| 答案对，但格式不符合规则 | 349 | 0 |
-| 没写 `####`，但最后的数字对 | 4 | 14 |
-| 格式对，答案错 | 171 | 333 |
-| 格式不对，答案也错 | 86 | 2 |
-| 没写 `####`，答案错 | 28 | 12 |
-| 没写 `####`，疑似被截断 | 34 | 8 |
-| **严格准确率（verl 评分）** | **49.1%** | **72.0%** |
-| **宽松准确率（只看答案）** | **75.8%** | **73.1%** |
-| 回答长度（字符，平均 / 中位数） | 1158 / 1038 | 866 / 793 |
-| 含反思用语（wait、verify 等）的回答 | 9.2% | 3.7% |
+| Correct (strict grader) | 647 | 950 |
+| Right answer, format rejected by grader | 349 | 0 |
+| No `####`, but the last number is right | 4 | 14 |
+| Format OK, wrong answer | 171 | 333 |
+| Bad format, wrong answer | 86 | 2 |
+| No `####`, wrong answer | 28 | 12 |
+| No `####`, likely truncated | 34 | 8 |
+| **Strict accuracy (verl grader)** | **49.1%** | **72.0%** |
+| **Lenient accuracy (answer only)** | **75.8%** | **73.1%** |
+| Response length (chars, mean / median) | 1158 / 1038 | 866 / 793 |
+| Responses with reflection words ("wait", "verify", ...) | 9.2% | 3.7% |
 
-- 训练前 25 步内，严格准确率就从 49% 跳到 72%，同时"格式不合规则但答案对"从 365 题降到 33 题。之后 90 步，严格准确率基本不动。
-- 只看答案本身，准确率从 75.8% 略降到 73.1%：103 题从错变对，139 题从对变错。**模型并没有算得更准。**
-- 变错的题里，常见情况是推理被压缩、漏掉条件。例如一题的标准答案是 36，训练前算对，训练后漏乘"每周 3 次"，答成 12。
+- Within the first 25 steps, strict accuracy jumped from 49% to 72%, while "right answer, bad format" fell from 365 to 33. Strict accuracy barely moved over the remaining 90 steps.
+- Judged on the answer alone, accuracy dropped slightly from 75.8% to 73.1%: 103 problems went from wrong to right and 139 from right to wrong. **The model did not get better at math.**
+- Among the problems that flipped to wrong, a common pattern is compressed reasoning that drops a condition. In one example the reference answer is 36; the base model got it right, while the trained model forgot to multiply by "3 times a week" and answered 12.
 
-### 训练中的验证（GSM8K 测试集）
+### Validation during training (GSM8K test set)
 
-| step | 严格准确率 | 宽松准确率 | 格式不合规则但答案对 | 疑似截断 | 平均长度（字符） | 反思用语 |
+| step | strict acc | lenient acc | right answer, bad format | likely truncated | mean length (chars) | reflection words |
 |---|---|---|---|---|---|---|
 | 0 | 49.1% | 76.7% | 365 | 41 | 1171 | 9.4% |
 | 25 | 72.0% | 74.5% | 33 | 35 | 1131 | 8.1% |
@@ -56,65 +59,95 @@ verl 的 GSM8K 评分规则只认 `#### 数字`，**井号后必须有空格**�
 | 100 | 71.4% | 71.9% | 6 | 10 | 874 | 3.2% |
 | 116 | 72.1% | 73.2% | 14 | 9 | 871 | 3.7% |
 
-### 训练动态
+### Training dynamics
 
-| 指标 | 前 5 步 → 最后 5 步 | 解读 |
+| Metric | First 5 steps → last 5 steps | Interpretation |
 |---|---|---|
-| 训练奖励 | 0.36 → 0.70 | 主要在前 30 步上涨，对应学会格式 |
-| 回答长度（token） | 486 → 288 | 持续变短，和 R1 论文中回答变长**相反** |
-| 截断比例 | 17% → 1.7% | 写满 1024 被截断的回答几乎消失 |
-| 策略熵 | 0.43 → 0.14 | 持续下降，模型输出越来越确定 |
-| 和参考模型的 KL | 0.007 → 1.5 | 第 60 步后快速上升，偏离原模型越来越远 |
-| 每步耗时 | 88 秒 → 61 秒 | 回答变短，生成更快 |
+| Training reward | 0.36 → 0.70 | Rises mostly in the first 30 steps, matching when the format was learned |
+| Response length (tokens) | 486 → 288 | Keeps shrinking, the **opposite** of the growing responses in the DeepSeek-R1 paper |
+| Truncation rate | 17% → 1.7% | Responses hitting the 1024 limit almost disappear |
+| Policy entropy | 0.43 → 0.14 | Keeps falling; outputs become more deterministic |
+| KL to reference model | 0.007 → 1.5 | Rises quickly after step 60; the policy drifts further from the base model |
+| Time per step | 88 s → 61 s | Shorter responses make generation faster |
 
-- 格式学会以后，奖励就不再上涨，但熵仍在下降、KL 仍在上升。说明后半程主要在**压缩回答**，没有学到新的解题能力。KL 系数 0.001 几乎不起约束作用。
-- 继续训练多半会让 KL 继续上升，没有好处。
-- 梯度范数从 0.095 升到 1.19，也说明后半程的更新越来越激进。
+- After the format was learned, reward stopped rising, but entropy kept falling and KL kept rising. The second half of training mostly **compressed responses** rather than teaching new problem-solving ability. A KL coefficient of 0.001 provides almost no constraint.
+- More training would most likely keep increasing KL with no benefit.
+- Gradient norm grew from 0.095 to 1.19, another sign of increasingly aggressive updates late in training.
 
 ### AIME
 
-| | 训练前 | 训练后 |
+| | Before | After |
 |---|---|---|
-| 答对 | 1/30 | 1/30 |
-| 没写出 `\boxed{}`（多半写满 4096 被截断） | 26 | 21 |
-| 回答平均长度（字符） | 9371 | 8283 |
-| 含反思用语的回答 | 96.7% | 76.7% |
+| Correct | 1/30 | 1/30 |
+| No `\boxed{}` (mostly hit the 4096 limit) | 26 | 21 |
+| Mean response length (chars) | 9371 | 8283 |
+| Responses with reflection words | 96.7% | 76.7% |
 
-- **单次贪心解码的 AIME 分数不能用来比较**：同样在 L40S、同样的设置，两次基线一次 4/30，一次 1/30。vLLM 每次的计算顺序略有不同，在 4096 token 的长回答里差异会被逐步放大。GSM8K 回答短，两次基线只差 8 题（48.4% 和 49.1%）。
-- 大部分回答写满 4096 也没写出答案，2B 模型关闭思考模式时，解不了竞赛题。
-- 训练后，疑似陷入重复循环的回答从 2 题（6.7%）增加到 9 题（30%）：模型在长题上反复写同一段推理，直到写满上限。GSM8K 回答短，几乎不受影响（0.2%）。
+- **A single greedy AIME run cannot be used for comparison**: on the same GPU type with identical settings, two baselines scored 4/30 and 1/30. vLLM's computation order varies slightly between runs, and the differences compound over 4096-token responses. GSM8K responses are short, so its two baselines differed by only 8 problems (48.4% vs. 49.1%).
+- Most responses filled 4096 tokens without reaching an answer: with thinking off, the 2B model cannot solve competition problems.
+- After training, likely-looping responses rose from 2 (6.7%) to 9 (30%): on long problems the model repeats the same reasoning until the limit. GSM8K responses are short and almost unaffected (0.2%).
 
-### 这次实验说明了什么
+### What this run shows
 
-1. **奖励设计会被模型"钻空子"**：模型最快学会的是满足评分规则的格式，而不是更好的推理。这和 R1 论文里说的格式奖励、准确率奖励要分开设计是同一个道理。
-2. **必须同时看严格和宽松两种评分**，否则会把格式改善误认为能力提升。
-3. GSM8K 对这个模型太简单（宽松准确率已有 76%），回答上限 1024 也偏短，不会出现 R1 那种回答变长、出现反思的现象。
+1. **Models exploit the reward design**: the fastest thing to learn was the grader's format, not better reasoning. This is the same reason the R1 paper designs format and accuracy rewards separately.
+2. **Always report both strict and lenient scores**; otherwise a format fix looks like a capability gain.
+3. GSM8K is too easy for this model (76% lenient accuracy before training), and a 1024-token limit is short, so R1-style longer responses and reflection do not emerge.
 
-### 下一步
+### Next steps (from run 1)
 
-- 修正评测口径：同时报告严格和宽松两种准确率，或者把提示词改得更明确，让基线不因格式丢分。
-- AIME 改成每题采样多次取平均（例如 16 次），减小波动。
-- 想观察 R1 现象，需要更难的训练数据（例如 MATH 或 DAPO-Math）、更长的回答上限，并考虑开启思考模式。
-- 把 KL 系数调大，或者在奖励开始停滞时提前停止，避免模型过度偏离原模型。
+- Fix the evaluation protocol: report strict and lenient accuracy together, or make the prompt explicit enough that the baseline does not lose points on format.
+- Sample AIME several times per problem (e.g. 16) and average to reduce variance.
+- To observe R1-like behavior: harder training data (e.g. MATH or DAPO-Math), longer response limits, and thinking mode.
+- Raise the KL coefficient, or stop early once reward plateaus, to avoid drifting too far from the base model.
 
-## 附录
+## Thinking-mode baseline (eval-*-baseline-think)
 
-### L40S 运行参考
+Setup: thinking mode on, sampling with the Qwen3.5 model card's recommended parameters (temperature 1.0, top_p 0.95, top_k 20; presence_penalty is not supported by verl's validation config). GSM8K: 1 sample per problem; AIME: 8 samples per problem; response limit 8192 tokens for both (the model card recommends 32768). Logs and responses are in [`think/`](think/); the GSM8K response file (~23 MB) is kept locally only. The first two attempts accidentally used temperature 0.6; they were stopped midway and discarded.
 
-- **试跑耗时（每步 64 个回答）：** 第 1 步 106 秒，其中有预热开销。之后每步：生成约 12 秒，计算旧策略概率约 3 秒，更新参数约 6 秒，合计约 25 秒；保存 checkpoint 约 21 秒。
-- **显存：** 训练部分峰值约 17.5 GB，vLLM 另外占用约 30% 显存。
-- **GSM8K 评测：** 从启动到结束约 11 分钟，其中启动约 3–4 分钟。
-- **回答样例：** 只用控制台日志时，`log_val_generations` 不会打印样例。`scripts/common.sh` 设置了 `trainer.validation_data_dir`，每次验证的全部回答会写到 `/workspace/logs/val_generations/<实验名>/`。
-- **评测结束时的 SIGSEGV：** AIME 评测结束时，奖励计算进程可能报 SIGSEGV，出现在指标打印之后，不影响结果。
+### GSM8K: nearly every problem the model finishes thinking about is right; points are lost to truncation and format
 
-### 环境排错记录
-
-在找到 L40S 之前试过几种显卡，遇到的问题和解决方法：
-
-| 现象 | 原因 | 解决 |
+| | Problems | Share |
 |---|---|---|
-| RTX 4090：vLLM 报 `No available memory for the cache blocks` | 24 GB 显存下，默认 `ROLLOUT_GPU_MEM_UTIL=0.3` 只给 vLLM 约 7 GB | 调高该值并开启 offload 后，又遇到下一行的内存不足 |
-| RTX 4090：Ray 报内存不足（`OutOfMemoryError`） | Pod 内存上限约 38 GB，offload 把参数放进内存后超限 | 换成 48 GB 显卡 |
-| 失败后重跑，内存或显存莫名不够 | 上次失败运行留下的进程没有退出，占用约 10 GB 内存 | 重跑前运行 `scripts/cleanup.sh` |
-| 48 GB 显卡：计算熵时 `CUDA out of memory` | Qwen3.5 词表很大；`use_remove_padding=False` 时不会分块计算熵，整块 logits 一次性展开 | 改为 `use_remove_padding=True`，开启分块计算熵，每卡 token 上限设为 6144（已写入 `scripts/common.sh`） |
-| A40（7 核 CPU）：试跑启动 5 分钟后日志不再更新，GPU 一直空闲，`ray status` 显示 CPU 7/7、GPU 0/1 | verl 默认开 8 个 TransferQueue 存储进程、8 个奖励进程和 8 个 rollout 调度进程，Ray 给每个分 1 个 CPU，CPU 不够时进程一直排队、不报错 | 在 `scripts/common.sh` 中把三类进程数都设为 2，并设 `ray_kwargs.ray_init.num_cpus=32` |
+| Finished thinking within 8192 tokens (`</think>` present) | 939 | 71.2% |
+| Finished thinking and the answer is right (number only) | 895 | 95.3% of finished |
+| ...of which the format was rejected (`####17`, `#### $18`, newline after `####`, ...) | 312 | |
+| Still thinking at 8192 tokens | 380 | 28.8% |
+| **Strict accuracy (verl grader)** | 589 | **44.7%** |
+| **Lenient accuracy** (answer part if finished, otherwise the last number) | 946 | **71.7%** |
+
+Estimated length needed to finish thinking (using ~3.3 characters per token, measured on truncated responses):
+
+| Response limit (tokens) | 2048 | 4096 | 6144 | 8192 |
+|---|---|---|---|---|
+| Problems that finish thinking within the limit (share of all) | 15% | 45% | 61% | 70% |
+
+- **When thinking finishes, accuracy is about 95%**, far above the 75.8% lenient accuracy with thinking off. GSM8K is not hard for this model; what it lacks is **finishing its reasoning within a limited budget**.
+- Unfinished responses contain "wait" 34 times on average (19 for finished ones), mostly re-checking the problem statement after already reaching the answer. They are rarely pure repetition loops (only 8 flagged by the compression check).
+- So RL on GSM8K can mainly improve format and reasoning length, not problem-solving ability. With a 4096-token training limit only 45% of problems can finish, so RL would most likely learn to shorten its thinking first.
+
+### AIME: not a single response finished thinking within 8192 tokens
+
+- All 240 responses (30 problems × 8 samples) hit the 8192 limit without `</think>`, so all score 0.
+- 8192 tokens is far too short for competition math in thinking mode (the model card recommends 81920 for hard problems). Under the current budget, AIME cannot measure the effect of training.
+
+## Appendix
+
+### L40S runtime reference
+
+- **Smoke-test timing (64 responses per step):** step 1 took 106 s including warm-up. After that, each step took ~25 s: ~12 s generation, ~3 s old-policy log-probs, ~6 s parameter update. Saving a checkpoint took ~21 s.
+- **Memory:** training peaked at ~17.5 GB; vLLM reserves another ~30% of GPU memory.
+- **GSM8K evaluation:** ~11 minutes end to end, including 3–4 minutes of startup.
+- **Sample responses:** with only the console logger, `log_val_generations` prints no samples. `scripts/common.sh` sets `trainer.validation_data_dir`, so every validation response is written to `/workspace/logs/val_generations/<experiment>/`.
+- **SIGSEGV at the end of evaluation:** the reward worker may report SIGSEGV when AIME evaluation finishes. It happens after the metrics are printed and does not affect results.
+
+### Troubleshooting log
+
+Problems encountered on other GPUs before settling on the L40S:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| RTX 4090: vLLM reports `No available memory for the cache blocks` | With 24 GB, the default `ROLLOUT_GPU_MEM_UTIL=0.3` gives vLLM only ~7 GB | Raising it and enabling offload led to the next row's out-of-memory error |
+| RTX 4090: Ray `OutOfMemoryError` (host RAM) | The Pod's RAM limit is ~38 GB; offloading parameters to RAM exceeded it | Switched to a 48 GB GPU |
+| Re-running after a failure runs out of RAM or GPU memory | Processes from the failed run did not exit and held ~10 GB of RAM | Run `scripts/cleanup.sh` before re-running |
+| 48 GB GPU: `CUDA out of memory` while computing entropy | Qwen3.5's vocabulary is very large; with `use_remove_padding=False` entropy is not chunked and the full logits tensor is materialized | Set `use_remove_padding=True`, enable chunked entropy, and cap tokens per GPU at 6144 (in `scripts/common.sh`) |
+| A40 (7 CPU cores): logs stop 5 minutes into the smoke test, GPU stays idle, `ray status` shows CPU 7/7, GPU 0/1 | verl starts 8 TransferQueue storage actors, 8 reward workers, and 8 rollout agents by default; Ray reserves 1 CPU for each, and actors queue forever without an error when CPUs run out | In `scripts/common.sh`, set all three counts to 2 and `ray_kwargs.ray_init.num_cpus=32` |

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 小规模试跑：确认训练、验证和保存 checkpoint 能跑通，分数没有参考价值。
-# 换了设置（例如 THINKING=1）后先跑一次，看清每步耗时和回答长度再开正式训练。
+# Small trial run: checks that training, validation, and checkpointing work. The scores are meaningless.
+# After changing a setting (e.g. THINKING=1), run this first to see per-step time and response length.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 export TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-16}"
